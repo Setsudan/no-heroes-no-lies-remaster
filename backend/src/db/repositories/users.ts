@@ -28,3 +28,20 @@ export async function createUser(params: {
   return result.rows[0];
 }
 
+export async function createGuestUser(params: { username: string }): Promise<User> {
+  const result = await dbPool.query<User>(
+    "INSERT INTO users (username, email, password_hash, is_guest) VALUES ($1, NULL, NULL, true) RETURNING *",
+    [params.username]
+  );
+  return result.rows[0];
+}
+
+export async function deleteUser(id: string): Promise<void> {
+  await dbPool.query("UPDATE game_session_participants SET user_id = NULL WHERE user_id = $1", [id]);
+  await dbPool.query("UPDATE game_sessions SET created_by_user_id = NULL WHERE created_by_user_id = $1", [
+    id
+  ]);
+  await dbPool.query("UPDATE game_sessions SET winner_user_id = NULL WHERE winner_user_id = $1", [id]);
+  await dbPool.query("DELETE FROM users WHERE id = $1", [id]);
+}
+

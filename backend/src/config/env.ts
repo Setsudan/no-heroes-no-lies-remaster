@@ -12,6 +12,7 @@ export interface AppConfig {
     database: string;
   };
   jwtSecret: string;
+  clientOrigin: string;
 }
 
 function requireEnv(name: string, fallback?: string): string {
@@ -31,6 +32,7 @@ export const config: AppConfig = {
     password: requireEnv("POSTGRES_PASSWORD", "game"),
     database: requireEnv("POSTGRES_DB", "no_heroes_no_lies")
   },
-  jwtSecret: requireEnv("JWT_SECRET", "dev-secret")
+  jwtSecret: requireEnv("JWT_SECRET", "dev-secret"),
+  clientOrigin: process.env.CLIENT_ORIGIN ?? "http://localhost:5173"
 };
 

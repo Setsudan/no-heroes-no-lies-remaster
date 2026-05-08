@@ -1,10 +1,11 @@
 export interface User {
   id: string;
   username: string;
-  email: string;
-  password_hash: string;
+  email: string | null;
+  password_hash: string | null;
   created_at: string;
   updated_at: string;
+  is_guest?: boolean;
 }
 
 export interface UserSession {

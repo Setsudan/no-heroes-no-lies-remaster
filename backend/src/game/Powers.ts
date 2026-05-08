@@ -60,35 +60,47 @@ export function playerHasPassive(player: PlayerState, passive: PassivePowerName)
 }
 
 export function getHeroPrimaryZeroCostPower(heroId: HeroId): ActivePowerName | null {
+  const p = getHeroPowers(heroId);
+  return p.free;
+}
+
+export function getHeroPowers(heroId: HeroId): {
+  free: ActivePowerName | null;
+  paid: ActivePowerName | null;
+} {
   switch (heroId) {
     case "troll":
-      return "change_monster";
+      return { free: "change_monster", paid: "fight_monster" };
     case "esprit":
-      return "fight_player_with_discarded_card";
+      return { free: "fight_player_with_discarded_card", paid: "add_strength_to_challenger" };
     case "barde":
-      return "shuffle_heroes_deck";
+      return { free: "shuffle_heroes_deck", paid: "change_hero" };
     case "elf":
-      return "exchange_gems_with_player";
+      return { free: "exchange_gems_with_player", paid: "exchange_2coins_for_life" };
     case "nain":
-      return "gain_2gems";
+      return { free: "gain_2gems", paid: "gain_life" };
     case "mage":
-      return "see_player_card";
+      return { free: "see_player_card", paid: "remove_coin" };
     case "exorciste":
-      return "shoot_player";
+      return { free: "shoot_player", paid: "all_in" };
     case "gobelin":
-      return "steal_gem";
-    case "witch":
-      return "blind_draw";
+      return { free: "steal_gem", paid: "steal_gem" };
+    case "geant":
+      return { free: null, paid: "parry_this_you_f_casual" };
+    case "chevalier":
+      return { free: null, paid: "steal_coin" };
     case "shapeshifter":
-      return "mimic_hero";
+      return { free: "mimic_hero", paid: "mimic_power" };
     case "werewolf":
-      return "dual_attack";
+      return { free: "dual_attack", paid: "dual_attack" };
+    case "witch":
+      return { free: "blind_draw", paid: "force_transform" };
     case "prince":
-      return "execution";
+      return { free: null, paid: "execution" };
     case "queen":
-      return "command_the_dead";
+      return { free: null, paid: "command_the_dead" };
     default:
-      return null;
+      return { free: null, paid: null };
   }
 }
 

@@ -69,5 +69,18 @@ export interface GameState {
   currentPlayerIndex: number;
   turnNumber: number;
   pendingDraw: PendingDraw | null;
+  turnStep: TurnStep;
+  turnPath: TurnPath;
+  currentPlayerUsedFreePowerThisTurn: boolean;
 }
+
+export type TurnStep =
+  | "action_choice"
+  | "pending_discard"
+  | "declare_after_draw"
+  | "powers_after_draw"
+  | "attack_after_declare"
+  | "end_turn";
+
+export type TurnPath = "draw" | "attack" | "demask" | null;
 

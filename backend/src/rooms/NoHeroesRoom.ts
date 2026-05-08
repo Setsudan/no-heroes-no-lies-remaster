@@ -12,6 +12,8 @@ import {
 import { loadHeroDefinitions, loadMonsterDefinitions } from "../db/repositories/reference";
 import { loadPowerDefinitions, PowerDefinitionMap } from "../game/PowerReference";
 import { verifyAccessToken } from "../utils/auth";
+import { findUserById } from "../db/repositories/users";
+import * as guestTracker from "./guestTracker";
 import { appendGameEvent } from "../game/Logging";
 import { SimpleBot } from "../bots/SimpleBot";
 
@@ -53,6 +55,15 @@ class NoHeroesRoomState extends Schema {
 
   @type("string")
   lastDiscardedHeroId: string = "";
+
+  @type("string")
+  turnStep: string = "action_choice";
+
+  @type("boolean")
+  currentPlayerHasPendingDraw: boolean = false;
+
+  @type("string")
+  ownerPlayerId: string = "";
 }
 
 interface JoinOptions {
@@ -73,6 +84,7 @@ export class NoHeroesRoom extends Room {
   private ownerPlayerId: PlayerId | null = null;
   private botController = new SimpleBot();
   private challengeTimeoutRef: any = null;
+  private clientSessionIdToGuestUserId = new Map<string, string>();
 
   private get roomState(): NoHeroesRoomState {
     return this.state as NoHeroesRoomState;
@@ -151,6 +163,14 @@ export class NoHeroesRoom extends Room {
       }
     }
 
+    if (userId) {
+      const user = await findUserById(userId);
+      if (user?.is_guest) {
+        guestTracker.recordJoin(userId, client.sessionId);
+        this.clientSessionIdToGuestUserId.set(client.sessionId, userId);
+      }
+    }
+
     const displayName =
       typeof options.displayName === "string" && options.displayName.trim().length > 0
         ? options.displayName.trim()
@@ -169,6 +189,8 @@ export class NoHeroesRoom extends Room {
       this.ownerPlayerId = playerConfig.id;
     }
 
+    this.roomState.ownerPlayerId = this.ownerPlayerId ?? "";
+
     const playerState = new PlayerPublicState();
     playerState.id = playerConfig.id;
     playerState.displayName = playerConfig.displayName;
@@ -178,8 +200,19 @@ export class NoHeroesRoom extends Room {
   onLeave(client: Client): void {
     const playerId = client.sessionId;
 
+    const guestUserId = this.clientSessionIdToGuestUserId.get(playerId);
+    if (guestUserId) {
+      this.clientSessionIdToGuestUserId.delete(playerId);
+      guestTracker.recordLeave(guestUserId, playerId);
+    }
+
     if (!this.engine) {
       this.pendingPlayers = this.pendingPlayers.filter((p) => p.id !== playerId);
+
+      if (this.ownerPlayerId === playerId) {
+        this.ownerPlayerId = this.pendingPlayers.length > 0 ? this.pendingPlayers[0].id : null;
+        this.roomState.ownerPlayerId = this.ownerPlayerId ?? "";
+      }
     }
 
     const publicState = this.roomState.players.get(playerId);
@@ -198,6 +231,7 @@ export class NoHeroesRoom extends Room {
     }
 
     if (this.ownerPlayerId && client.sessionId !== this.ownerPlayerId) {
+      client.send("error", { code: 4001, message: "Only the game master can start the game" });
       return;
     }
 
@@ -416,6 +450,17 @@ export class NoHeroesRoom extends Room {
     }
 
     this.roomState.lastDiscardedHeroId = engineState.lastDiscardedHeroId ?? "";
+    this.roomState.turnStep = engineState.turnStep;
+    this.roomState.currentPlayerHasPendingDraw =
+      engineState.pendingDraw !== null && engineState.pendingDraw.playerId === this.engine.getCurrentPlayer().id;
+    this.roomState.ownerPlayerId = this.ownerPlayerId ?? "";
+
+    for (const client of this.clients) {
+      const player = engineState.players.find((p) => p.id === client.sessionId);
+      if (player) {
+        client.send("private_state", { heroId: player.heroId });
+      }
+    }
   }
 
   private maybeTriggerBotTurn(): void {

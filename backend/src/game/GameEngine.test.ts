@@ -40,6 +40,10 @@ export function basicGameEngineTest(): void {
   const first = engine.state.players[0];
   const second = engine.state.players[1];
 
+  engine.declareIdentity(first.id, first.heroId);
+  if (engine.state.activeMonsters.length > 0) {
+    engine.attackMonster(first.id, 0);
+  }
   second.alive = false;
   engine.endTurn(first.id);
 

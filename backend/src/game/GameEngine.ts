@@ -9,9 +9,11 @@ import {
   PendingDraw,
   PlayerConfig,
   PlayerId,
-  PlayerState
+  PlayerState,
+  TurnPath,
+  TurnStep
 } from "./GameState";
-import { ActivePowerName, getHeroPrimaryZeroCostPower, playerHasPassive } from "./Powers";
+import { ActivePowerName, getHeroPowers, getHeroPrimaryZeroCostPower, playerHasPassive } from "./Powers";
 import { PowerDefinitionMap } from "./PowerReference";
 
 class Random {
@@ -234,7 +236,10 @@ export class GameEngine {
       activeMonsters,
       currentPlayerIndex: startingPlayerIndex,
       turnNumber: 1,
-      pendingDraw: null
+      pendingDraw: null,
+      turnStep: "action_choice",
+      turnPath: null,
+      currentPlayerUsedFreePowerThisTurn: false
     };
 
     this.handleTurnStartPassives();
@@ -258,6 +263,15 @@ export class GameEngine {
       throw new Error("Unknown hero id");
     }
 
+    if (this.state.turnStep === "action_choice") {
+      this.state.turnPath = "attack";
+      this.state.turnStep = "attack_after_declare";
+    } else if (this.state.turnStep === "declare_after_draw") {
+      this.state.turnStep = "powers_after_draw";
+    } else {
+      throw new Error("Cannot declare identity in current turn step");
+    }
+
     player.declaredIdentityHeroId = heroId;
 
     this.pushEvent({
@@ -271,6 +285,9 @@ export class GameEngine {
 
   startDraw(playerId: PlayerId): HeroId {
     const player = this.requireCurrentPlayer(playerId);
+    if (this.state.turnStep !== "action_choice") {
+      throw new Error("Can only draw at start of turn");
+    }
     if (!player.alive) {
       throw new Error("Dead player cannot act");
     }
@@ -281,8 +298,13 @@ export class GameEngine {
       throw new Error("Draw already in progress");
     }
 
+    this.state.turnPath = "draw";
+    this.state.turnStep = "pending_discard";
+
     const drawnHeroId = this.drawHero();
     if (!drawnHeroId) {
+      this.state.turnStep = "action_choice";
+      this.state.turnPath = null;
       throw new Error("No hero card available to draw");
     }
 
@@ -305,6 +327,9 @@ export class GameEngine {
 
   resolveDrawChoice(playerId: PlayerId, keepDrawn: boolean): void {
     const player = this.requireCurrentPlayer(playerId);
+    if (this.state.turnStep !== "pending_discard") {
+      throw new Error("Must discard one of two cards first");
+    }
     if (!player.alive) {
       throw new Error("Dead player cannot act");
     }
@@ -331,6 +356,7 @@ export class GameEngine {
     this.state.heroDiscardPile.push(discardedHeroId);
     this.state.lastDiscardedHeroId = discardedHeroId;
     this.state.pendingDraw = null;
+    this.state.turnStep = "declare_after_draw";
 
     this.pushEvent({
       type: "resolve_draw",
@@ -344,6 +370,9 @@ export class GameEngine {
 
   attackMonster(playerId: PlayerId, activeMonsterIndex: number): void {
     const player = this.requireCurrentPlayer(playerId);
+    if (this.state.turnStep !== "attack_after_declare") {
+      throw new Error("Can only attack monster after declaring identity for attack path");
+    }
     if (!player.alive) {
       throw new Error("Dead player cannot act");
     }
@@ -411,6 +440,8 @@ export class GameEngine {
       this.state.activeMonsters.splice(activeMonsterIndex, 1);
     }
 
+    this.state.turnStep = "end_turn";
+
     this.pushEvent({
       type: "attack_monster",
       sessionId: this.sessionId,
@@ -427,6 +458,9 @@ export class GameEngine {
 
   attemptDemask(playerId: PlayerId, targetPlayerId: PlayerId, guessedHeroId: HeroId): void {
     const player = this.requireCurrentPlayer(playerId);
+    if (this.state.turnStep !== "action_choice") {
+      throw new Error("Demask only allowed as turn action choice");
+    }
     if (!player.alive) {
       throw new Error("Dead player cannot act");
     }
@@ -437,11 +471,18 @@ export class GameEngine {
       throw new Error("Not enough gems to attempt demask");
     }
 
+    this.state.turnPath = "demask";
+    this.state.turnStep = "end_turn";
+
     const target = this.findPlayer(targetPlayerId);
     if (!target || !target.alive) {
+      this.state.turnPath = null;
+      this.state.turnStep = "action_choice";
       throw new Error("Target player not found or dead");
     }
     if (target.id === player.id) {
+      this.state.turnPath = null;
+      this.state.turnStep = "action_choice";
       throw new Error("Cannot demask self");
     }
 
@@ -477,12 +518,35 @@ export class GameEngine {
 
   usePower(playerId: PlayerId, power: ActivePowerName, args: any): void {
     const player = this.requireCurrentPlayer(playerId);
+    if (this.state.turnStep !== "powers_after_draw") {
+      throw new Error("Powers can only be used after draw path and declaring identity");
+    }
     if (!player.alive) {
       throw new Error("Dead player cannot use powers");
     }
 
     if (player.caughtLiarThisTurn) {
       throw new Error("Player has been caught lying this turn");
+    }
+
+    const declaredId = player.declaredIdentityHeroId;
+    if (!declaredId) {
+      throw new Error("Must declare identity before using powers");
+    }
+    const heroPowers = getHeroPowers(declaredId);
+    const isFree = heroPowers.free === power;
+    const isPaid = heroPowers.paid === power;
+    if (!isFree && !isPaid) {
+      throw new Error("Only the declared identity's powers can be used");
+    }
+    if (isFree) {
+      if (this.state.currentPlayerUsedFreePowerThisTurn) {
+        throw new Error("Free power already used this turn");
+      }
+    } else {
+      if (heroPowers.free !== null && !this.state.currentPlayerUsedFreePowerThisTurn) {
+        throw new Error("Must use free power before paid power");
+      }
     }
 
     const powerDef = this.powers.get(power);
@@ -494,6 +558,10 @@ export class GameEngine {
     }
 
     this.validatePowerTargets(player, power, args);
+
+    if (isFree) {
+      this.state.currentPlayerUsedFreePowerThisTurn = true;
+    }
 
     switch (power) {
       case "change_monster":
@@ -619,6 +687,13 @@ export class GameEngine {
 
   endTurn(playerId: PlayerId): void {
     const player = this.requireCurrentPlayer(playerId);
+    const canEndFromPowers =
+      this.state.turnStep === "powers_after_draw" &&
+      (this.state.currentPlayerUsedFreePowerThisTurn ||
+        !getHeroPowers(player.declaredIdentityHeroId ?? "").free);
+    if (this.state.turnStep !== "end_turn" && !canEndFromPowers) {
+      throw new Error("Turn must be finished before ending");
+    }
     if (!player.alive) {
       throw new Error("Dead player cannot end turn");
     }
@@ -638,6 +713,9 @@ export class GameEngine {
 
     this.state.turnNumber += 1;
     this.state.pendingDraw = null;
+    this.state.turnStep = "action_choice";
+    this.state.turnPath = null;
+    this.state.currentPlayerUsedFreePowerThisTurn = false;
 
     for (const p of this.state.players) {
       p.caughtLiarThisTurn = false;
@@ -776,7 +854,10 @@ export class GameEngine {
       activeMonsters: [...state.activeMonsters],
       currentPlayerIndex: state.currentPlayerIndex,
       turnNumber: state.turnNumber,
-      pendingDraw: state.pendingDraw ? { ...state.pendingDraw } : null
+      pendingDraw: state.pendingDraw ? { ...state.pendingDraw } : null,
+      turnStep: state.turnStep,
+      turnPath: state.turnPath,
+      currentPlayerUsedFreePowerThisTurn: state.currentPlayerUsedFreePowerThisTurn
     };
   }
 
@@ -793,6 +874,9 @@ export class GameEngine {
     this.state.currentPlayerIndex = snapshot.currentPlayerIndex;
     this.state.turnNumber = snapshot.turnNumber;
     this.state.pendingDraw = snapshot.pendingDraw ? { ...snapshot.pendingDraw } : null;
+    this.state.turnStep = snapshot.turnStep;
+    this.state.turnPath = snapshot.turnPath;
+    this.state.currentPlayerUsedFreePowerThisTurn = snapshot.currentPlayerUsedFreePowerThisTurn;
   }
 
   private restoreTurnFromSnapshot(liarId: PlayerId): void {

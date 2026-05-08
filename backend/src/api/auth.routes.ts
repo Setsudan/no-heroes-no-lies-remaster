@@ -1,7 +1,8 @@
 import express from "express";
 import { hashPassword, verifyPassword, signAccessToken } from "../utils/auth";
-import { createUser, findUserByEmail, findUserById, findUserByUsername } from "../db/repositories/users";
+import { createUser, createGuestUser, findUserByEmail, findUserById, findUserByUsername } from "../db/repositories/users";
 import { requireAuth } from "../middleware/auth";
+import { AUTH_COOKIE_NAME, authCookieClearOptions, authCookieOptions } from "../utils/cookies";
 
 export const authRouter = express.Router();
 
@@ -40,7 +41,10 @@ authRouter.post("/register", async (req, res) => {
     const user = await createUser({ username, email, passwordHash });
     const token = signAccessToken(user.id);
 
-    res.status(201).json({
+    res
+      .cookie(AUTH_COOKIE_NAME, token, authCookieOptions)
+      .status(201)
+      .json({
       user: {
         id: user.id,
         username: user.username,
@@ -69,6 +73,11 @@ authRouter.post("/login", async (req, res) => {
       return;
     }
 
+    if (!user.password_hash) {
+      res.status(401).json({ error: "Invalid credentials" });
+      return;
+    }
+
     const ok = await verifyPassword(password, user.password_hash);
     if (!ok) {
       res.status(401).json({ error: "Invalid credentials" });
@@ -76,17 +85,59 @@ authRouter.post("/login", async (req, res) => {
     }
 
     const token = signAccessToken(user.id);
-    res.json({
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        created_at: user.created_at
-      },
-      token
-    });
+    res
+      .cookie(AUTH_COOKIE_NAME, token, authCookieOptions)
+      .json({
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          created_at: user.created_at
+        },
+        token
+      });
   } catch {
     res.status(500).json({ error: "Failed to login" });
+  }
+});
+
+authRouter.post("/logout", (_req, res) => {
+  res.clearCookie(AUTH_COOKIE_NAME, authCookieClearOptions).status(204).send();
+});
+
+authRouter.post("/guest", async (req, res) => {
+  const { username } = req.body ?? {};
+
+  if (!username || typeof username !== "string") {
+    res.status(400).json({ error: "username is required" });
+    return;
+  }
+
+  const trimmed = username.trim();
+  if (trimmed.length < 3 || trimmed.length > 50) {
+    res.status(400).json({ error: "Username must be between 3 and 50 characters" });
+    return;
+  }
+
+  try {
+    const user = await createGuestUser({ username: trimmed });
+    const token = signAccessToken(user.id);
+
+    res
+      .cookie(AUTH_COOKIE_NAME, token, authCookieOptions)
+      .status(201)
+      .json({
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email ?? undefined,
+          created_at: user.created_at
+        },
+        token
+      });
+  } catch (err) {
+    console.error("POST /auth/guest failed:", err);
+    res.status(500).json({ error: "Failed to create guest session" });
   }
 });
 
@@ -107,7 +158,7 @@ authRouter.get("/me", requireAuth, async (req, res) => {
     res.json({
       id: user.id,
       username: user.username,
-      email: user.email,
+      email: user.email ?? undefined,
       created_at: user.created_at
     });
   } catch {

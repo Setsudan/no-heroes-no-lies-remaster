@@ -25,10 +25,22 @@ services:
       POSTGRES_PASSWORD: game
       POSTGRES_DB: no_heroes_no_lies
       JWT_SECRET: change-me
+      CLIENT_ORIGIN: http://localhost:8080
     depends_on:
       - db
     ports:
       - "4001:4000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: http://localhost:4001
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
 
 volumes:
   db-data:

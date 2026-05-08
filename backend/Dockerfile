@@ -22,6 +22,7 @@ COPY backend/package*.json ./
 RUN npm install --only=production
 
 COPY --from=build /app/backend/dist ./dist
+COPY rules.md ./rules.md
 
 EXPOSE 4000
 

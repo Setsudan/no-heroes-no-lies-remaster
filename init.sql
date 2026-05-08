@@ -2,16 +2,28 @@
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- Users and authentication
+-- Users and authentication (email/password_hash nullable for guest users; is_guest for temporary accounts)
 
 CREATE TABLE IF NOT EXISTS users (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  username varchar(50) NOT NULL UNIQUE,
-  email varchar(255) NOT NULL UNIQUE,
-  password_hash text NOT NULL,
+  username varchar(50) NOT NULL,
+  email varchar(255),
+  password_hash text,
   created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  is_guest boolean NOT NULL DEFAULT false
 );
+
+-- Unique username and email only for registered (non-guest) users
+CREATE UNIQUE INDEX IF NOT EXISTS users_username_registered_key ON users (username) WHERE email IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_key ON users (email) WHERE email IS NOT NULL;
+
+-- Migrate existing DBs created with old schema (no-op if already applied)
+ALTER TABLE users ALTER COLUMN email DROP NOT NULL;
+ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_guest boolean NOT NULL DEFAULT false;
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_username_key;
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_email_key;
 
 CREATE TABLE IF NOT EXISTS user_sessions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
